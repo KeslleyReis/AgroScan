@@ -4,8 +4,17 @@ import streamlit as st
 import cv2
 import numpy as np
 import time
-import base64
+import base64 
 from io import BytesIO
+
+# 🎨 Paleta profissional
+cores = {
+    "Fértil": (34,139,34),
+    "Seco": (210,180,140),
+    "Rochoso": (80,80,80),
+    "Úmido": (0,100,200),
+    "Arenoso": (194,178,128)
+}
 
 # Função para converter imagem np para base64
 def img_to_base64(img):
@@ -93,6 +102,17 @@ if uploaded_file:
 
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
 
+    # 🌱 NDVI FAKE (índice de vegetação mais realista)
+    b, g, r = cv2.split(img.astype("float"))
+
+    ndvi = (g - r) / (g + r + 1e-5)
+
+    ndvi_normalizado = cv2.normalize(ndvi, None, 0, 255, cv2.NORM_MINMAX)
+    ndvi_uint8 = ndvi_normalizado.astype(np.uint8)
+
+    # 🎨 mapa profissional
+    mapa_ndvi = cv2.applyColorMap(ndvi_uint8, cv2.COLORMAP_TURBO)
+
     # Máscaras
     verde = cv2.inRange(hsv, (35,40,40), (85,255,255))
     amarelo = cv2.inRange(hsv, (20,100,100), (35,255,255))
@@ -121,6 +141,7 @@ if uploaded_file:
         resultado = "Terreno arenoso"
 
     st.success(resultado)
+    st.metric("Saúde da vegetação", f"{round(np.mean(ndvi)*100,1)}%")
 
     st.write(f"Fértil: {round(p_verde*100,2)}%")
     st.write(f"Seco: {round(p_amarelo*100,2)}%")
@@ -128,12 +149,14 @@ if uploaded_file:
     st.write(f"Úmido: {round(p_azul*100,2)}%")
 
     # 🗺️ Mapa geral
-    mapa = np.zeros_like(img)
+    mapa = mapa_ndvi.copy()
 
-    mapa[verde > 0] = [0,255,0]
-    mapa[amarelo > 0] = [255,255,0]
-    mapa[cinza > 0] = [128,128,128]
-    mapa[azul > 0] = [0,0,255]
+    mapa[verde > 0] = cores["Fértil"]
+    mapa[amarelo > 0] = cores["Seco"]
+    mapa[cinza > 0] = cores["Rochoso"]
+    mapa[azul > 0] = cores["Úmido"]
+
+    mapa = cv2.GaussianBlur(mapa, (11,11), 0)
 
     st.subheader(" Comparação Interativa: Passe o mouse para comparar")
     
@@ -186,37 +209,77 @@ if uploaded_file:
             regioes[name] = hsv[y_start:y_end, x_start:x_end]
             coords[name] = (x_start, x_end, y_start, y_end)
 
-    def analisar_regiao(hsv_area):
-        verde = cv2.inRange(hsv_area, (35,40,40), (85,255,255))
-        amarelo = cv2.inRange(hsv_area, (20,100,100), (35,255,255))
-        cinza = cv2.inRange(hsv_area, (0,0,50), (180,50,200))
-        azul = cv2.inRange(hsv_area, (90,50,50), (130,255,255))
+    def analisar_regiao(hsv_area, img_area):
 
-        total = hsv_area.shape[0] * hsv_area.shape[1]
+        b, g, r = cv2.split(img_area.astype("float"))
+        ndvi = (g - r) / (g + r + 1e-5)
 
-        p_verde = np.sum(verde > 0) / total
-        p_amarelo = np.sum(amarelo > 0) / total
-        p_cinza = np.sum(cinza > 0) / total
-        p_azul = np.sum(azul > 0) / total
+        ndvi_mean = np.mean(ndvi)
 
-        if p_verde > 0.4:
+        gray = cv2.cvtColor(img_area, cv2.COLOR_BGR2GRAY)
+        textura = cv2.Laplacian(gray, cv2.CV_64F)
+        textura_mean = np.mean(np.abs(textura))
+
+        umidade = np.mean(b > g)
+
+        if ndvi_mean > 0.3:
             tipo = "Fértil"
-        elif p_amarelo > 0.3:
-            tipo = "Seco"
-        elif p_cinza > 0.3:
+        elif textura_mean > 40:
             tipo = "Rochoso"
-        elif p_azul > 0.2:
+        elif umidade > 0.4:
             tipo = "Úmido"
+        elif ndvi_mean < 0.1:
+            tipo = "Seco"
         else:
             tipo = "Arenoso"
 
         return tipo, p_verde, p_amarelo, p_cinza, p_azul
 
+
+        # 🤖 RECOMENDAÇÃO AUTOMÁTICA
+    def recomendacao(tipo):
+
+        if tipo == "Fértil":
+            return {
+                "plantio": "Alta produtividade. Ideal para culturas como milho, soja e feijão.",
+                "irrigacao": "Baixa necessidade. Monitoramento semanal é suficiente.",
+                "acao": "Manter nutrientes e evitar erosão do solo."
+            }
+
+        elif tipo == "Seco":
+            return {
+                "plantio": "Indicado para culturas resistentes como sorgo ou mandioca.",
+                "irrigacao": "Irrigação frequente recomendada (2x ao dia em períodos críticos).",
+                "acao": "Aplicar cobertura morta para retenção de umidade."
+            }
+
+        elif tipo == "Úmido":
+            return {
+                "plantio": "Bom para arroz ou culturas adaptadas à alta umidade.",
+                "irrigacao": "Evitar irrigação excessiva.",
+                "acao": "Melhorar drenagem do solo para evitar fungos."
+            }
+
+        elif tipo == "Rochoso":
+            return {
+                "plantio": "Baixa viabilidade agrícola.",
+                "irrigacao": "Não recomendado.",
+                "acao": "Considerar correção do solo ou uso alternativo."
+            }
+
+        else:  # Arenoso
+            return {
+                "plantio": "Culturas leves como cenoura, batata-doce e amendoim.",
+                "irrigacao": "Irrigação constante, pois perde água rápido.",
+                "acao": "Adicionar matéria orgânica para melhorar retenção."
+            }
+
+
     iniciar = st.button("Iniciar análise")
 
     placeholder_img = st.empty()
     placeholder_text = st.empty()
-
+    
     if iniciar:
         for nome, regiao in regioes.items():
             st.session_state.trail = []
@@ -232,11 +295,13 @@ if uploaded_file:
 
         for nome, regiao in regioes.items():
 
-            tipo, v, a, c, az = analisar_regiao(regiao)
-            resultados[nome] = tipo
-
-            # coordenadas do grid
             x_start, x_end, y_start, y_end = coords[nome]
+
+            img_area = img[y_start:y_end, x_start:x_end]
+
+            tipo, _, _, _, _ = analisar_regiao(regiao, img_area)
+
+            resultados[nome] = tipo
 
             # ANIMAÇÃO DO DRONE (CORRIGIDA)
 
@@ -265,7 +330,7 @@ if uploaded_file:
                         cv2.line(frame, (0, y_line), (w, y_line), (255,255,255), 2)
 
                     # destaque da região
-                    cv2.rectangle(frame, (x_start,y_start), (x_end,y_end), (255,0,0), 2)
+                    cv2.rectangle(frame, (x_start,y_start), (x_end,y_end), (255,100,0), 2)
 
                     # suavização (movimento fluido)
                     if 'drone_x' not in st.session_state:
@@ -314,7 +379,7 @@ if uploaded_file:
                     radar_layer = np.zeros_like(frame)
 
                     for i in range(3):
-                        raio = int((tempo*80 + i*15) % 60)
+                        raio = int((time.time()*80) % 40)
                         cv2.circle(radar_layer, (cx, cy), raio, (0,255,0), 2)
 
                     # aplicar máscara
@@ -330,11 +395,8 @@ if uploaded_file:
                     scan_filtrado = cv2.bitwise_and(scan_layer, mask)
                     frame = cv2.add(frame, scan_filtrado)
 
-                    # OVERLAY (AQUI É O LUGAR CERTO)
-                    mapa_suave = cv2.GaussianBlur(mapa, (21,21), 0)
-                    frame = cv2.addWeighted(frame, 0.8, mapa_suave, 0.2, 0)
-
-                    placeholder_img.image(frame, use_container_width=True)
+                    if int(px) % 2 == 0:  # só atualiza 1 a cada 3 frames
+                        placeholder_img.image(frame, use_container_width=True)
 
                     # velocidade REAL
                     time.sleep(0.01)
@@ -358,11 +420,28 @@ if uploaded_file:
 
         placeholder_img.image(frame_final, use_container_width=True)
 
-        
-        # 📊 RESULTADO FINAL (FADE NORMAL)
-        
+        #Resumofinal
+        st.subheader("Legenda do mapa")
 
-        st.subheader("Resumo das regiões")
+        for tipo, cor in cores.items():
+            st.markdown(
+                f"<div style='display:flex; align-items:center; gap:10px;'>"
+                f"<div style='width:20px; height:20px; background-color:rgb{cor}; border-radius:4px;'></div>"
+                f"<span>{tipo}</span>"
+                f"</div>",
+                unsafe_allow_html=True
+            )        
+
+        st.subheader("Recomendações Inteligentes")
 
         for nome, tipo in resultados.items():
-            st.write(f"{nome}: {tipo}")
+
+            rec = recomendacao(tipo)
+
+            st.markdown(f"""
+            ### {nome} - {tipo}
+
+            🌱 **Plantio:** {rec['plantio']}  
+            💧 **Irrigação:** {rec['irrigacao']}  
+            ⚙️ **Ação recomendada:** {rec['acao']}
+            """)
