@@ -1,6 +1,3 @@
-# python -m streamlit run AgroScan.py
-# Dependências: pip install streamlit opencv-python-headless numpy pandas requests anthropic reportlab
-
 from __future__ import annotations  # FIX: habilita anotações de tipo modernas em Python 3.8/3.9
 
 import streamlit as st
@@ -73,21 +70,103 @@ _CINZA   = dict(lo=(0,  0,   50),  hi=(180, 50,  200))
 # CSS GLOBAL
 # ═══════════════════════════════════════════════════════════════
 
+def _file_to_base64(path: str, target_w: int = 1600, max_bytes: int = 900_000) -> str:
+    """
+    Converte imagem para base64 para usar em CSS.
+    Importante: reduz tamanho para evitar truncamento do CSS (que pode impedir o background de aparecer).
+    """
+    try:
+        with open(path, "rb") as f:
+            raw = f.read()
+        arr = np.frombuffer(raw, dtype=np.uint8)
+        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if img is None:
+            # Fallback: se decode falhar, tenta sem redimensionar
+            return base64.b64encode(raw).decode("utf-8")
+
+        h, w = img.shape[:2]
+        if w > target_w:
+            scale = float(target_w) / float(w)
+            new_h = max(1, int(h * scale))
+            img = cv2.resize(img, (target_w, new_h), interpolation=cv2.INTER_AREA)
+
+        # JPEG é suficiente para background e costuma reduzir mais o payload
+        # (busca um tamanho abaixo de max_bytes ajustando quality).
+        for quality in (70, 60, 50, 45, 40, 35):
+            ok, enc = cv2.imencode(
+                ".jpg",
+                img,
+                [int(cv2.IMWRITE_JPEG_QUALITY), quality],
+            )
+            if not ok:
+                continue
+            b = enc.tobytes()
+            if len(b) <= max_bytes:
+                return base64.b64encode(b).decode("utf-8")
+
+        # Se ainda ficou grande, usa o menor quality disponível
+        ok, enc = cv2.imencode(
+            ".jpg",
+            img,
+            [int(cv2.IMWRITE_JPEG_QUALITY), 30],
+        )
+        if ok:
+            return base64.b64encode(enc.tobytes()).decode("utf-8")
+    except Exception:
+        pass
+    return ""
+
+
+def _resolve_background_image_data_uri() -> str:
+    """
+    Tenta usar uma imagem de fundo aérea (assets/background.*).
+    Se não existir, retorna string vazia e o CSS cai no fallback (gradientes).
+    """
+    assets_dir = os.path.join(APP_DIR, "assets")
+    candidates = [
+        # Imagem fornecida via workspace do Cursor (se existir localmente)
+        r"C:\Users\kesll\.cursor\projects\c-Users-kesll-OneDrive-rea-de-Trabalho-AgroScan\assets\c__Users_kesll_AppData_Roaming_Cursor_User_workspaceStorage_073d71ee01a20ed23d97b405d9e41c24_images_Paisagem_rural_ao_entardecer-d498ce95-2770-4dad-9985-5996714815c8.png",
+        os.path.join(assets_dir, "background.jpg"),
+        os.path.join(assets_dir, "background.jpeg"),
+        os.path.join(assets_dir, "background.png"),
+        os.path.join(assets_dir, "farm_aerial.jpg"),
+        os.path.join(assets_dir, "farm_aerial.jpeg"),
+        os.path.join(assets_dir, "farm_aerial.png"),
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            b64 = _file_to_base64(path)
+            if not b64:
+                continue
+            return f"data:image/jpeg;base64,{b64}"
+    return ""
+
+
 def inject_global_css():
     theme_mode = st.session_state.get("theme_mode", "Escuro")
+    bg_data_uri = _resolve_background_image_data_uri()
+    bg_url_css = f"url('{bg_data_uri}')" if bg_data_uri else ""
+    bg_url_layer = f",\n    {bg_url_css}" if bg_url_css else ""
+    app_bg_composed = (
+        "radial-gradient(circle at 50% 0%, rgba(57, 255, 154, 0.14), transparent 0 40%), "
+        "linear-gradient(180deg, rgba(2,10,6,0.85) 0%, rgba(2,10,6,0.92) 100%)"
+        + (f", {bg_url_css}" if bg_url_css else "")
+    )
     palette = {
         "Escuro": {
-            "bg": "radial-gradient(circle at top left, rgba(34,166,34,0.12), transparent 0 24%), linear-gradient(180deg, #07110d 0%, #0a1712 100%)",
+            # SaaS dark: deep green/black tones + subtle radial glow
+            "bg": "radial-gradient(circle at 50% 0%, rgba(37, 255, 168, 0.10), transparent 0 35%), radial-gradient(circle at 20% 10%, rgba(46, 191, 95, 0.10), transparent 0 28%), linear-gradient(180deg, #020d07 0%, #020d07 35%, #000000 100%)",
             "text": "#eef9ef",
-            "sub": "#b6d3bc",
-            "panel": "linear-gradient(180deg, rgba(17,30,24,0.96) 0%, rgba(12,22,18,0.96) 100%)",
-            "panel_soft": "rgba(15, 28, 22, 0.90)",
-            "sidebar": "linear-gradient(180deg, rgba(9,20,16,0.98) 0%, rgba(16,31,24,0.98) 100%)",
-            "border": "rgba(79, 160, 97, 0.22)",
-            "shadow": "0 8px 18px rgba(0,0,0,.20)",
-            "hover": "rgba(24, 44, 33, 0.98)",
-            "chip": "rgba(34,166,34,0.12)",
-            "topbar_bg": "rgba(7, 17, 13, 0.97)",
+            "sub": "rgba(220, 246, 231, 0.74)",
+            # glass panels
+            "panel": "linear-gradient(180deg, rgba(15, 47, 31, 0.46) 0%, rgba(2, 13, 7, 0.56) 100%)",
+            "panel_soft": "rgba(2, 13, 7, 0.42)",
+            "sidebar": "linear-gradient(180deg, rgba(2, 13, 7, 0.82) 0%, rgba(15, 47, 31, 0.38) 100%)",
+            "border": "rgba(114, 255, 167, 0.18)",
+            "shadow": "0 18px 55px rgba(0,0,0,.45)",
+            "hover": "rgba(114, 255, 167, 0.08)",
+            "chip": "rgba(114, 255, 167, 0.10)",
+            "topbar_bg": "rgba(2, 13, 7, 0.72)",
         },
         "Claro": {
             "bg": "radial-gradient(circle at top left, rgba(34,166,34,0.10), transparent 0 24%), linear-gradient(180deg, #f7fbf8 0%, #edf5ef 100%)",
@@ -119,15 +198,47 @@ def inject_global_css():
   --ag-hover: {p['hover']};
   --ag-chip: {p['chip']};
   --ag-topbar-bg: {p['topbar_bg']};
-  --ag-success: #22a622;
-  --ag-info: #1f8ef1;
-  --ag-warn: #ffb020;
-  --ag-danger: #ff5c5c;
+  --ag-success: #39ff9a;
+  --ag-info: #4aa3ff;
+  --ag-warn: #ffb34d;
+  --ag-danger: #ff4d4d;
 }}
 
 html, body, [data-testid='stAppViewContainer'], [data-testid='stHeader'] {{
   color: var(--ag-text) !important;
   background: var(--ag-bg) !important;
+  background-attachment: fixed;
+}}
+[data-testid='stAppViewContainer'] {{
+  background-image: {app_bg_composed} !important;
+  background-size: cover !important;
+  background-position: center !important;
+  background-attachment: fixed !important;
+}}
+.stApp::before {{
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  background-image:
+    radial-gradient(circle at 50% 0%, rgba(57, 255, 154, 0.14), transparent 0 40%),
+    linear-gradient(180deg, rgba(2,10,6,0.85) 0%, rgba(2,10,6,0.92) 100%){bg_url_layer};
+  background-size: cover;
+  background-position: center;
+  filter: blur(0px);
+  transform: scale(1.02);
+}}
+.stApp::after {{
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  background: radial-gradient(circle at 50% 0%, rgba(15,47,31,0.55), rgba(2,13,7,0.0) 55%);
+  pointer-events: none;
+}}
+.stApp > header, .stApp > div {{
+  position: relative;
+  z-index: 1;
 }}
 .stApp {{
   background: var(--ag-bg) !important;
@@ -135,10 +246,13 @@ html, body, [data-testid='stAppViewContainer'], [data-testid='stHeader'] {{
 }}
 .block-container {{
   padding-top: 1.1rem;
+  background-image: radial-gradient(circle at 22% 18%, rgba(66, 221, 104, 0.08), transparent 0 15%),
+                    radial-gradient(circle at 80% 10%, rgba(86, 185, 255, 0.06), transparent 0 18%);
 }}
 section[data-testid='stSidebar'] {{
   background: var(--ag-sidebar) !important;
   border-right: 1px solid var(--ag-border) !important;
+  box-shadow: inset 4px 0 30px rgba(34, 166, 34, 0.08);
 }}
 h1, h2, h3, h4, h5, h6,
 p, li, label, small {{
@@ -155,7 +269,9 @@ div[data-testid='stForm'] {{
   border: 1px solid var(--ag-border) !important;
   box-shadow: var(--ag-shadow) !important;
   color: var(--ag-text) !important;
-  border-radius: 14px;
+  border-radius: 18px;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
 }}
 div[data-testid='stMetric'] {{
   padding: 10px 12px;
@@ -184,22 +300,40 @@ div[data-baseweb='tab'][aria-selected='true'] {{
 }}
 .stButton > button,
 .stDownloadButton > button {{
-  border-radius: 12px;
-  border: 1px solid var(--ag-border) !important;
-  background: var(--ag-panel) !important;
+  border-radius: 18px;
+  border: 1px solid rgba(77, 185, 101, 0.35) !important;
+  background: linear-gradient(135deg, rgba(57,255,154,0.22), rgba(74,163,255,0.12)) !important;
   color: var(--ag-text) !important;
-  transition: transform .18s ease, box-shadow .18s ease, filter .18s ease;
+  box-shadow: 0 18px 40px rgba(0,0,0, 0.35);
+  transition: transform .22s ease, box-shadow .22s ease, filter .22s ease, border-color .22s ease;
+}}
+
+/* Garante que botões "primary" não pareçam erro */
+.stButton > button[kind="primary"],
+.stDownloadButton > button[kind="primary"] {{
+  border-color: rgba(57,255,154,0.50) !important;
+  background: linear-gradient(135deg, rgba(57,255,154,0.30), rgba(74,163,255,0.16)) !important;
+}}
+.stButton > button[kind="primary"]:hover,
+.stDownloadButton > button[kind="primary"]:hover {{
+  box-shadow: 0 22px 52px rgba(0,0,0, 0.42), 0 0 26px rgba(57,255,154,0.10);
+}}
+.stButton > button[kind="secondary"],
+.stDownloadButton > button[kind="secondary"] {{
+  border-color: rgba(114,255,167,0.22) !important;
+  background: rgba(2, 13, 7, 0.35) !important;
 }}
 .stButton > button:hover,
 .stDownloadButton > button:hover {{
   transform: translateY(-1px);
-  box-shadow: 0 10px 22px rgba(34,166,34,0.14);
-  filter: brightness(1.02);
+  box-shadow: 0 18px 32px rgba(34,166,34,0.22);
+  filter: brightness(1.10);
+  border-color: rgba(99, 221, 116, 0.75) !important;
 }}
 .stButton > button:focus,
 .stDownloadButton > button:focus {{
-  border-color: rgba(34,166,34,0.38) !important;
-  box-shadow: 0 0 0 0.16rem rgba(34,166,34,0.14) !important;
+  border-color: rgba(99, 221, 116, 0.85) !important;
+  box-shadow: 0 0 0 0.18rem rgba(34,166,34,0.20) !important;
 }}
 .stTextInput input,
 .stNumberInput input,
@@ -209,6 +343,120 @@ div[data-baseweb='base-input'] input {{
   background: var(--ag-panel-soft) !important;
   color: var(--ag-text) !important;
   border: 1px solid var(--ag-border) !important;
+  border-radius: 14px !important;
+}}
+
+/* ── Wizard / SaaS components ── */
+.ag-saas-shell {{
+  display: grid;
+  gap: 10px;
+  margin-top: -6px;
+}}
+.ag-stepper {{
+  display: flex;
+  gap: 10px;
+  align-items: stretch;
+  justify-content: space-between;
+  padding: 12px;
+  border-radius: 22px;
+  background: rgba(2, 13, 7, 0.42);
+  border: 1px solid rgba(114, 255, 167, 0.18);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 18px 55px rgba(0,0,0,.35);
+  margin-bottom: 6px;
+}}
+.ag-step {{
+  flex: 1;
+  padding: 12px 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(114, 255, 167, 0.10);
+  background: rgba(2, 13, 7, 0.28);
+  transition: transform .20s ease, border-color .20s ease, background .20s ease, box-shadow .20s ease;
+}}
+.ag-step.active {{
+  border-color: rgba(57,255,154,0.55);
+  box-shadow: 0 0 0 1px rgba(57,255,154,0.12), 0 20px 55px rgba(0,0,0,0.42);
+  background: linear-gradient(180deg, rgba(15, 47, 31, 0.54), rgba(2, 13, 7, 0.28));
+}}
+.ag-step.done {{
+  border-color: rgba(57,255,154,0.30);
+}}
+.ag-step-k {{
+  font-size: 11px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: rgba(220,246,231,0.65);
+}}
+.ag-step-t {{
+  margin-top: 2px;
+  font-weight: 760;
+  color: var(--ag-text);
+}}
+.ag-step-s {{
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--ag-sub);
+}}
+.ag-glass {{
+  background: rgba(2, 13, 7, 0.42);
+  border: 1px solid rgba(114, 255, 167, 0.18);
+  border-radius: 22px;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 18px 55px rgba(0,0,0,.40);
+  padding: 18px;
+  margin-top: 0;
+}}
+.ag-glow {{
+  box-shadow: 0 0 0 1px rgba(57,255,154,0.10), 0 0 26px rgba(57,255,154,0.10), 0 18px 55px rgba(0,0,0,.40);
+}}
+.ag-ndvi-track {{
+  width: 100%;
+  height: 12px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.07);
+  border: 1px solid rgba(114,255,167,0.14);
+  overflow: hidden;
+}}
+.ag-ndvi-fill {{
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(74,163,255,0.60), rgba(57,255,154,0.85));
+  box-shadow: 0 0 18px rgba(57,255,154,0.20);
+}}
+.ag-kpi {{
+  display: grid;
+  gap: 6px;
+}}
+.ag-kpi .k {{
+  font-size: 12px;
+  color: rgba(220,246,231,0.70);
+}}
+.ag-kpi .v {{
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}}
+.ag-cat {{
+  border-radius: 20px;
+  padding: 16px;
+  border: 1px solid rgba(114,255,167,0.14);
+  background: rgba(2, 13, 7, 0.30);
+  transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+}}
+.ag-cat:hover {{
+  transform: translateY(-2px);
+  border-color: rgba(57,255,154,0.36);
+  box-shadow: 0 0 0 1px rgba(57,255,154,0.12), 0 22px 60px rgba(0,0,0,0.44);
+}}
+.ag-cat .t {{
+  font-weight: 760;
+}}
+.ag-cat .p {{
+  font-size: 26px;
+  font-weight: 900;
+  margin-top: 6px;
 }}
 
 /* ── Barra de navegação fixa no topo ── */
@@ -486,6 +734,177 @@ section[data-testid='stTabs'], div[data-testid='stTabs'] {{
 .fade-slide:nth-child(19) {{ animation-delay: 1.26s; }}
 .fade-slide:nth-child(20) {{ animation-delay: 1.33s; }}
 
+/* ── HERO SECTION UPLOAD/CÂMERA ── */
+.ag-hero-upload {{
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(135deg, rgba(34,166,34,0.22) 0%, rgba(11,27,15,0.95) 55%, rgba(17,45,22,0.96) 100%);
+  border: 1px solid rgba(78, 181, 95, 0.35);
+  border-radius: 24px;
+  padding: 36px 28px;
+  text-align: center;
+  margin: 16px 0 24px;
+  box-shadow: inset 0 0 0 1px rgba(34,166,34,0.08), 0 18px 52px rgba(6, 16, 9, 0.40);
+  transition: transform 0.24s, box-shadow 0.24s, border-color 0.24s;
+}}
+.ag-hero-upload:before {{
+  content: '';
+  position: absolute;
+  width: 240px;
+  height: 240px;
+  border-radius: 50%;
+  top: -40px;
+  left: -40px;
+  background: radial-gradient(circle, rgba(98, 214, 129, 0.18), transparent 56%);
+  pointer-events: none;
+}}
+.ag-hero-upload:after {{
+  content: '';
+  position: absolute;
+  width: 320px;
+  height: 320px;
+  border-radius: 50%;
+  bottom: -90px;
+  right: -70px;
+  background: radial-gradient(circle, rgba(84, 170, 255, 0.14), transparent 55%);
+  pointer-events: none;
+}}
+.ag-hero-upload:hover {{
+  border-color: rgba(99, 221, 116, 0.55);
+  transform: translateY(-2px);
+  box-shadow: inset 0 0 0 1px rgba(34,166,34,0.12), 0 20px 58px rgba(12, 35, 18, 0.45);
+}}
+.ag-hero-title {{
+  font-size: 1.85rem;
+  font-weight: 900;
+  color: #f8ffef;
+  margin-bottom: 8px;
+  letter-spacing: -0.35px;
+  text-shadow: 0 1px 12px rgba(34,166,34,0.28);
+}}
+.ag-hero-subtitle {{
+  font-size: 1rem;
+  color: #cfe6b9;
+  margin-bottom: 22px;
+  font-weight: 500;
+  line-height: 1.7;
+}}
+.ag-hero-icon {{
+  font-size: 2.6rem;
+  margin-bottom: 14px;
+  display: block;
+  animation: agPulse 1.6s ease-in-out infinite;
+}}
+.ag-hero-upload *,
+.ag-hero-upload *::before,
+.ag-hero-upload *::after {{
+  position: relative;
+  z-index: 1;
+}}
+
+/* ── PROPRIEDADE COMPRIMIDA ── */
+.ag-property-compact {{
+  background: var(--ag-panel-soft);
+  border: 1px solid var(--ag-border);
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+  font-size: 0.9rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}}
+.ag-property-name {{
+  font-weight: 700;
+  color: var(--ag-text);
+}}
+.ag-property-info {{
+  color: var(--ag-sub);
+  font-size: 0.85rem;
+}}
+.ag-property-badge {{
+  display: inline-block;
+  background: var(--ag-success);
+  color: white;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  font-weight: 700;
+}}
+
+/* ── STEPPER MINIMALISTA ── */
+.ag-stepper-simple {{
+  display: flex;
+  gap: 8px;
+  margin: 14px 0;
+  flex-wrap: wrap;
+}}
+.ag-stepper-simple .ag-step-simple {{
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  background: var(--ag-panel-soft);
+  border: 1px solid var(--ag-border);
+  color: var(--ag-sub);
+  transition: all 0.18s;
+}}
+.ag-stepper-simple .ag-step-simple.done {{
+  background: var(--ag-chip);
+  border-color: rgba(34, 166, 34, 0.34);
+  color: var(--ag-text);
+}}
+.ag-stepper-simple .ag-step-simple.active {{
+  background: linear-gradient(90deg, rgba(34, 166, 34, 0.24), rgba(60, 120, 255, 0.16));
+  border-color: rgba(34, 166, 34, 0.34);
+  color: var(--ag-text);
+}}
+
+/* ── ACCORDION ESTENDIDO ── */
+.ag-expandable {{
+  background: var(--ag-panel);
+  border: 1px solid var(--ag-border);
+  border-radius: 12px;
+  margin: 12px 0;
+  overflow: hidden;
+  transition: border-color 0.18s;
+}}
+.ag-expandable.expanded {{
+  border-color: rgba(34, 166, 34, 0.28);
+}}
+.ag-expandable-title {{
+  padding: 12px 14px;
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--ag-text);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  user-select: none;
+  transition: background 0.18s;
+}}
+.ag-expandable-title:hover {{
+  background: var(--ag-hover);
+}}
+.ag-expandable-content {{
+  padding: 0 14px 14px;
+  border-top: 1px solid var(--ag-border);
+  color: var(--ag-sub);
+}}
+
+/* ── MODO SIMPLES ── */
+.ag-simplify-mode {{
+  display: grid;
+  gap: 20px;
+}}
+.ag-simplify-mode .ag-section {{
+  order: 10;
+}}
+.ag-simplify-mode .ag-section.priority {{
+  order: 1;
+}}
+
 @media (max-width: 768px) {{
   .block-container {{ padding: 1rem 0.75rem 4rem; }}
   h1 {{ font-size: 1.35rem !important; }}
@@ -496,6 +915,9 @@ section[data-testid='stTabs'], div[data-testid='stTabs'] {{
   .agroscan-notice, .agroscan-floating-legend {{ padding: 10px 12px; position: static; }}
   .ag-topbar {{ padding: 0 10px; gap: 0; }}
   .ag-topbar-tab {{ padding: 0 10px; font-size: 13px; }}
+  .ag-hero-upload {{ padding: 20px 16px; }}
+  .ag-hero-title {{ font-size: 1.35rem; }}
+  .ag-hero-icon {{ font-size: 1.8rem; }}
 }}
 </style>
         """,
@@ -632,6 +1054,249 @@ def render_floating_grid_legend():
         """,
         unsafe_allow_html=True,
     )
+
+
+WIZARD_STEPS = [
+    ("1", "Cadastro da propriedade"),
+    ("2", "Upload da imagem"),
+    ("3", "Processamento"),
+    ("4", "Resultados"),
+]
+
+
+def _wizard_init():
+    st.session_state.setdefault("wizard_step", 1)
+
+
+def _wizard_set_step(step: int):
+    st.session_state["wizard_step"] = max(1, min(4, int(step)))
+
+
+def render_wizard_stepper(active_step: int, done_until: int = 0):
+    blocks = []
+    for i, (k, title) in enumerate(WIZARD_STEPS, start=1):
+        cls = "ag-step"
+        status = "Aguardando"
+        if i < active_step or i <= done_until:
+            cls += " done"
+            status = "Concluído"
+        if i == active_step:
+            cls += " active"
+            status = "Em andamento"
+        blocks.append(
+            f"<div class='{cls}'>"
+            f"<div class='ag-step-k'>Etapa {k}</div>"
+            f"<div class='ag-step-t'>{title}</div>"
+            f"<div class='ag-step-s'>{status}</div>"
+            f"</div>"
+        )
+    st.markdown(f"<div class='ag-stepper'>{''.join(blocks)}</div>", unsafe_allow_html=True)
+
+
+def _wizard_primary_actions(can_back: bool, can_next: bool, next_label: str = "Continuar"):
+    left, right = st.columns([1, 1])
+    with left:
+        if can_back:
+            if st.button("← Voltar", use_container_width=True):
+                _wizard_set_step(st.session_state["wizard_step"] - 1)
+                st.rerun()
+    with right:
+        if st.button(next_label, use_container_width=True, type="primary", disabled=not can_next):
+            _wizard_set_step(st.session_state["wizard_step"] + 1)
+            st.rerun()
+
+
+def render_wizard(current_user: dict, propriedades: list, usar_ia: bool, api_key: str):
+    _wizard_init()
+    step = int(st.session_state.get("wizard_step", 1))
+
+    has_property = bool(st.session_state.get("selected_property_id")) or bool(propriedades)
+    has_image = bool(st.session_state.get("last_image_widget")) and (
+        st.session_state.get("upload_image_input") is not None or st.session_state.get("camera_image_input") is not None
+    )
+    has_analysis = "analises" in st.session_state
+
+    done_until = 0
+    if has_property:
+        done_until = 1
+    if has_image:
+        done_until = 2
+    if has_analysis:
+        done_until = 3
+
+    render_wizard_stepper(step, done_until=done_until)
+
+    st.markdown("<div class='ag-saas-shell'>", unsafe_allow_html=True)
+
+    if step == 1:
+        st.markdown("<div class='ag-glass ag-glow'>", unsafe_allow_html=True)
+        typewriter("👋 Bem-vindo(a) ao AgroScan", tag="h2")
+
+        # Seleção de propriedade ativa (para análise/histórico)
+        if propriedades:
+            opcao_nenhuma = "Modo rápido (sem histórico) ⚡"
+            labels_props = [opcao_nenhuma] + [f"{p['nome']} — {p['cidade'] or 'Sem região'}" for p in propriedades]
+            default_index = 0
+            selected_prop_id = st.session_state.get("selected_property_id")
+            if selected_prop_id:
+                for idx, p in enumerate(propriedades, start=1):
+                    if p.get("id") == selected_prop_id:
+                        default_index = idx
+                        break
+
+            csel, ctag = st.columns([2.4, 1])
+            with csel:
+                escolha = st.selectbox(
+                    "Propriedade ativa",
+                    labels_props,
+                    index=default_index,
+                    help="A propriedade ativa é usada para salvar histórico e enriquecer a análise com clima/localização.",
+                    label_visibility="collapsed",
+                )
+            with ctag:
+                if escolha == opcao_nenhuma:
+                    st.session_state["selected_property_id"] = None
+                    st.info("Modo rápido")
+                else:
+                    prop_ativa = propriedades[labels_props.index(escolha) - 1]
+                    st.session_state["selected_property_id"] = prop_ativa["id"]
+                    st.success(f"✓ {prop_ativa['nome']}")
+        else:
+            st.caption("Cadastre sua primeira propriedade abaixo para habilitar histórico e recursos de localização.")
+
+        render_tab_registro(current_user, propriedades)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        # Permite seguir mesmo sem salvar (modo rápido), mas incentiva cadastro
+        can_next = True
+        _wizard_primary_actions(can_back=False, can_next=can_next, next_label="Ir para upload")
+
+    elif step == 2:
+        st.markdown("<div class='ag-glass ag-glow'>", unsafe_allow_html=True)
+        typewriter("🌍 Realize seu upload de imagem abaixo (drone/câmera)", tag="h2")
+        st.caption("Envie uma imagem do terreno para iniciar a análise. Formatos aceitos: JPG/PNG.")
+
+        # Reaproveita o fluxo já consolidado de seleção e atualização de imagem
+        aba_upload, aba_camera = st.tabs(["📁 Upload de arquivo", "📸 Usar câmera"])
+        with aba_upload:
+            st.markdown("**Dica:** use capturas aéreas (drone) para maior precisão.")
+            arquivo_upload = st.file_uploader(
+                "Selecione a imagem do terreno", type=["jpg", "jpeg", "png"],
+                key="upload_image_input",
+                on_change=handle_new_image_input, args=("upload_image_input", "Upload"),
+                label_visibility="collapsed",
+            )
+        with aba_camera:
+            foto_camera = st.camera_input(
+                "Tire uma foto", key="camera_image_input",
+                on_change=handle_new_image_input, args=("camera_image_input", "Câmera"),
+                label_visibility="collapsed",
+            )
+
+        ultimo_widget = st.session_state.get("last_image_widget")
+        imagem_entrada = None
+        if ultimo_widget == "upload_image_input" and arquivo_upload is not None:
+            imagem_entrada = arquivo_upload
+        elif ultimo_widget == "camera_image_input" and foto_camera is not None:
+            imagem_entrada = foto_camera
+        elif arquivo_upload is not None:
+            imagem_entrada = arquivo_upload
+        elif foto_camera is not None:
+            imagem_entrada = foto_camera
+
+        if imagem_entrada is not None:
+            # persiste para a Etapa 3 (processamento)
+            st.session_state["wizard_imagem_entrada"] = imagem_entrada
+            st.session_state["wizard_origem_imagem"] = "Upload" if ultimo_widget == "upload_image_input" else "Câmera"
+            try:
+                img_bytes = imagem_entrada.getvalue()
+                raw = np.frombuffer(img_bytes, dtype=np.uint8)
+                img_full = cv2.imdecode(raw, cv2.IMREAD_COLOR)
+                if img_full is not None:
+                    img = redimensionar(img_full, MAX_W, MAX_H)
+                    img_rgb_display = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                    img_b64 = img_rgb_to_base64(img_rgb_display)
+                    st.markdown(
+                        f"<div style='display:flex;gap:14px;align-items:center;justify-content:space-between;'>"
+                        f"<div class='ag-kpi'><div class='k'>Prévia</div><div class='v'>Imagem pronta</div></div>"
+                        f"<img src='data:image/jpeg;base64,{img_b64}' style='width:260px;border-radius:18px;border:1px solid rgba(114,255,167,0.18);box-shadow:0 22px 60px rgba(0,0,0,0.40);'/>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+            except Exception:
+                pass
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        _wizard_primary_actions(can_back=True, can_next=bool(imagem_entrada), next_label="Processar")
+
+    elif step == 3:
+        st.markdown("<div class='ag-glass ag-glow'>", unsafe_allow_html=True)
+        typewriter("⚙️ Processamento e análise", tag="h2")
+        st.caption("Configure a malha de inspeção e inicie a varredura. Você verá um estado de carregamento enquanto o drone processa os grids.")
+
+        # Reusa a lógica completa já existente para evitar regressões,
+        # porém sem renderizar novamente o upload/câmera (já feito na Etapa 2).
+        render_tab_analise(current_user, propriedades, usar_ia, api_key, wizard_mode="wizard")
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        # Se a análise já existe, permite seguir para resultados
+        _wizard_primary_actions(can_back=True, can_next=("analises" in st.session_state), next_label="Ver resultados")
+
+    else:
+        st.markdown("<div class='ag-glass ag-glow'>", unsafe_allow_html=True)
+        typewriter("📈 Dashboard de resultados", tag="h2")
+        st.caption("Visão executiva com NDVI, categorias do terreno e recomendações. Você pode exportar depois para PDF.")
+
+        if "analises" not in st.session_state:
+            st.info("Nenhuma análise encontrada nesta sessão. Volte e execute o processamento.")
+            st.markdown("</div>", unsafe_allow_html=True)
+            _wizard_primary_actions(can_back=True, can_next=False, next_label="—")
+            return
+
+        metricas = st.session_state.get("metricas_globais", {}) or {}
+        ndvi = float(metricas.get("ndvi_global") or 0.0)
+        ndvi_pct = max(0.0, min(100.0, ndvi * 100.0))
+
+        c_kpi1, c_kpi2 = st.columns([1.2, 1])
+        with c_kpi1:
+            st.markdown(
+                f"<div class='ag-kpi'><div class='k'>NDVI médio</div>"
+                f"<div class='v'>{ndvi_pct:.1f}%</div>"
+                f"<div class='ag-ndvi-track'><div class='ag-ndvi-fill' style='width:{ndvi_pct:.1f}%'></div></div>"
+                f"<div class='agroscan-muted' style='margin-top:8px'>Indicador de vigor vegetativo baseado em bandas verde/vermelho.</div></div>",
+                unsafe_allow_html=True,
+            )
+        with c_kpi2:
+            st.markdown(
+                f"<div class='ag-kpi'><div class='k'>Resultado geral</div>"
+                f"<div class='v'>{st.session_state.get('resultado_geral','—')}</div>"
+                f"<div class='agroscan-muted'>Origem: {st.session_state.get('origem_imagem','—')}</div></div>",
+                unsafe_allow_html=True,
+            )
+
+        # Categorias (cards)
+        p_verde = float(metricas.get("p_verde") or 0.0) * 100.0
+        p_amarelo = float(metricas.get("p_amarelo") or 0.0) * 100.0
+        p_cinza = float(metricas.get("p_cinza") or 0.0) * 100.0
+        p_azul = float(metricas.get("p_azul") or 0.0) * 100.0
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.markdown(f"<div class='ag-cat'><div class='t'>🌿 Fértil</div><div class='p'>{p_verde:.1f}%</div><div class='agroscan-muted'>Alta vegetação</div></div>", unsafe_allow_html=True)
+        c2.markdown(f"<div class='ag-cat'><div class='t'>☀️ Seco</div><div class='p'>{p_amarelo:.1f}%</div><div class='agroscan-muted'>Solo exposto</div></div>", unsafe_allow_html=True)
+        c3.markdown(f"<div class='ag-cat'><div class='t'>🪨 Rochoso</div><div class='p'>{p_cinza:.1f}%</div><div class='agroscan-muted'>Baixa cobertura</div></div>", unsafe_allow_html=True)
+        c4.markdown(f"<div class='ag-cat'><div class='t'>💧 Úmido</div><div class='p'>{p_azul:.1f}%</div><div class='agroscan-muted'>Possível encharcamento</div></div>", unsafe_allow_html=True)
+
+        st.divider()
+        # Mantém o painel detalhado existente (mapa NDVI, grids, alertas, plano de ação, etc.)
+        st.markdown("<div class='agroscan-muted'>Detalhes completos abaixo.</div>", unsafe_allow_html=True)
+        render_tab_analise(current_user, propriedades, usar_ia, api_key, wizard_mode="wizard")
+
+        st.markdown("</div>", unsafe_allow_html=True)
+        _wizard_primary_actions(can_back=True, can_next=False, next_label="—")
+
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def render_interactive_geo_map(
@@ -1686,32 +2351,59 @@ def obter_analise_salva(analysis_id: int):
 
 
 def render_auth_screen():
-    st.info("Faça login para acessar o painel completo, histórico e gestão por fazenda.")
-    tab_login, tab_registro = st.tabs(["Entrar", "Criar conta"])
-    with tab_login:
-        with st.form("login_form", clear_on_submit=False):
-            username = st.text_input("Usuário")
-            password = st.text_input("Senha", type="password")
-            entrou = st.form_submit_button("Entrar", use_container_width=True)
-        if entrou:
-            user = autenticar_usuario(username, password)
-            if user:
-                st.session_state["current_user"] = user
-                st.success("Login realizado com sucesso.")
-                st.rerun()
-            else:
-                st.error("Usuário ou senha inválidos.")
-    with tab_registro:
-        with st.form("register_form", clear_on_submit=True):
-            novo_user = st.text_input("Novo usuário")
-            nova_senha = st.text_input("Nova senha", type="password")
-            criar = st.form_submit_button("Criar conta", use_container_width=True)
-        if criar:
-            ok, msg = criar_usuario(novo_user, nova_senha)
-            if ok:
-                st.success(msg)
-            else:
-                st.warning(msg)
+    with st.container():
+        col_empty_left, col_center, col_empty_right = st.columns([1, 1.6, 1])
+        with col_center:
+            st.markdown(
+                """
+                <div class='ag-glass ag-glow' style='max-width:520px;margin:40px auto 10px;'>
+                    <div style='text-align:center;margin-bottom:18px'>
+                        <div style='font-size:44px;line-height:1;margin-bottom:6px'>🫛</div>
+                        <div style='font-size:1.7rem;font-weight:700;margin-bottom:2px'>AgroScan</div>
+                        <div style='font-size:0.9rem;letter-spacing:0.16em;text-transform:uppercase;color:rgba(220,246,231,0.65)'>
+                            AGRITECH · DRONES · IA
+                        </div>
+                    </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            tab_login, tab_registro = st.tabs(["Entrar", "Criar conta"])
+            with tab_login:
+                with st.form("login_form", clear_on_submit=False):
+                    username = st.text_input("Usuário", placeholder="seu usuário")
+                    password = st.text_input("Senha", type="password", placeholder="sua senha")
+                    entrou = st.form_submit_button("Entrar →", use_container_width=True, type="primary")
+                if entrou:
+                    user = autenticar_usuario(username, password)
+                    if user:
+                        st.session_state["current_user"] = user
+                        st.success("Login realizado com sucesso.")
+                        st.rerun()
+                    else:
+                        st.error("Usuário ou senha inválidos.")
+
+            with tab_registro:
+                with st.form("register_form", clear_on_submit=True):
+                    novo_user = st.text_input("Novo usuário", placeholder="crie um usuário")
+                    nova_senha = st.text_input("Nova senha", type="password", placeholder="defina uma senha")
+                    criar = st.form_submit_button("Criar conta", use_container_width=True, type="primary")
+                if criar:
+                    ok, msg = criar_usuario(novo_user, nova_senha)
+                    if ok:
+                        st.success(msg)
+                    else:
+                        st.warning(msg)
+
+            st.markdown(
+                """
+                <div style='margin-top:16px;font-size:0.78rem;color:rgba(220,246,231,0.65);text-align:center'>
+                    Área de demonstração — use um usuário de teste ou crie sua conta para explorar os painéis.
+                </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -2405,7 +3097,7 @@ def render_tab_registro(current_user: dict, propriedades: list):
     """
     typewriter("🏡 Cadastro de Propriedade", tag="h2")
     st.markdown(
-        "<div class='agroscan-subtitle'>Registre suas fazendas para ativar histórico, clima automático e comparação temporal.</div>",
+        "<div class='agroscan-subtitle'>Registre suas fazendas para ativar histórico, clima automático e comparação temporal, mas você pode continuar sem cadastro, mas com menos recursos.</div>",
         unsafe_allow_html=True,
     )
 
@@ -2460,8 +3152,17 @@ def render_tab_registro(current_user: dict, propriedades: list):
 # ABA: ANÁLISE GERAL
 # ═══════════════════════════════════════════════════════════════
 
-def render_tab_analise(current_user: dict, propriedades: list, usar_ia: bool, api_key: str):
-    """Toda a lógica de análise — painel da fazenda, upload, resultados, histórico."""
+def render_tab_analise(current_user: dict, propriedades: list, usar_ia: bool, api_key: str, wizard_mode: str = "full"):
+    """
+    NOVO FLUXO MINIMALISTA: 
+    1. Hero section upload/câmera → DESTAQUE MÁXIMO
+    2. Propriedade comprimida → opcional
+    3. Clima/IBGE → expandables
+    4. Resultados → após upload
+    """
+    
+    wizard_mode = (wizard_mode or "full").strip().lower()
+    show_upload_ui = wizard_mode == "full"
 
     amostras_modelo = contar_amostras_modelo(current_user["id"])
     propriedade_ativa = None
@@ -2469,115 +3170,235 @@ def render_tab_analise(current_user: dict, propriedades: list, usar_ia: bool, ap
     clima_atual = {}
     historico_prop = []
 
-    # ── Seleção de propriedade ────────────────────────────────
-    typewriter("🧭 Painel da Propriedade", tag="h3")
-    render_workflow_stepper(
-        bool(st.session_state.get("selected_property_id")),
-        bool(st.session_state.get("active_image_signature")),
-        "analises" in st.session_state,
-    )
+    # ═════════════════════════════════════════════════════════════
+    # SEÇÃO 1: SELEÇÃO DE PROPRIEDADE (apenas no modo completo)
+    # ═════════════════════════════════════════════════════════════
+    if show_upload_ui:
+        if propriedades:
+            opcao_nenhuma = "Modo rápido (sem histórico) ⚠️"
+            labels_props = [opcao_nenhuma] + [f"{p['nome']} — {p['cidade'] or 'Sem região'}" for p in propriedades]
+            default_index = 0
+            selected_prop_id = st.session_state.get("selected_property_id")
+            if selected_prop_id:
+                for idx, prop in enumerate(propriedades, start=1):
+                    if prop["id"] == selected_prop_id:
+                        default_index = idx
+                        break
 
-    if propriedades:
-        opcao_nenhuma = "Nenhuma (sem histórico)"
-        labels_props = [opcao_nenhuma] + [f"{p['nome']} — {p['cidade'] or 'Sem região'}" for p in propriedades]
-        default_index = 0
-        selected_prop_id = st.session_state.get("selected_property_id")
-        if selected_prop_id:
-            for idx, prop in enumerate(propriedades, start=1):
-                if prop["id"] == selected_prop_id:
-                    default_index = idx
-                    break
-        escolha_prop = st.selectbox(
-            "Propriedade ativa para esta análise",
-            labels_props,
-            index=default_index,
-            help="Selecione 'Nenhuma' para análise rápida sem salvar histórico.",
-        )
-        if escolha_prop == opcao_nenhuma:
-            propriedade_ativa = None
-            st.session_state["selected_property_id"] = None
-            st.caption("Modo avulso ativo — a análise não gera histórico nem comparação temporal.")
+            col_prop_select, col_prop_info = st.columns([2.5, 1])
+            with col_prop_select:
+                escolha_prop = st.selectbox(
+                    "Propriedade (para histórico, clima e comparação)",
+                    labels_props,
+                    index=default_index,
+                    help="Selecione uma propriedade para habilitar histórico e clima automático.",
+                    label_visibility="collapsed"
+                )
+                if escolha_prop == opcao_nenhuma:
+                    propriedade_ativa = None
+                    st.session_state["selected_property_id"] = None
+                else:
+                    propriedade_ativa = propriedades[labels_props.index(escolha_prop) - 1]
+                    st.session_state["selected_property_id"] = propriedade_ativa["id"]
+
+            with col_prop_info:
+                if propriedade_ativa:
+                    st.success(f"✓ {propriedade_ativa['nome']}")
+                else:
+                    st.info("Modo rápido")
         else:
-            propriedade_ativa = propriedades[labels_props.index(escolha_prop) - 1]
-            st.session_state["selected_property_id"] = propriedade_ativa["id"]
-            st.caption(f"Lat: {propriedade_ativa['latitude']}, Lon: {propriedade_ativa['longitude']} • Área: {propriedade_ativa['area_ha']} ha")
+            st.info("📌 Nenhuma propriedade cadastrada. Crie uma em 'Registro de Propriedade' para habilitar histórico.")
+            propriedade_ativa = None
+
+        st.divider()
     else:
-        render_priority_notice(
-            "Nenhuma propriedade cadastrada",
-            "Vá até a aba 'Registro de Propriedade' para cadastrar sua fazenda e habilitar histórico e clima automático.",
-            level="info",
+        # No wizard, tentamos usar a propriedade previamente selecionada (se houver)
+        selected_prop_id = st.session_state.get("selected_property_id")
+        if selected_prop_id and propriedades:
+            for p in propriedades:
+                if p.get("id") == selected_prop_id:
+                    propriedade_ativa = p
+                    break
+
+    # ═════════════════════════════════════════════════════════════
+    # SEÇÃO 2: UPLOAD/CÂMERA (somente no modo completo; no wizard isso acontece na Etapa 2)
+    # ═════════════════════════════════════════════════════════════
+    if show_upload_ui:
+        st.markdown(
+            """
+            <div class='ag-hero-upload'>
+                <span class='ag-hero-icon'>📷</span>
+                <div class='ag-hero-title'>Faça seu upload</div>
+                <div class='ag-hero-subtitle'>Selecione sua propriedade acima e envie uma foto do seu terreno ou tire uma foto com a câmera para iniciar a análise</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
 
-    # ── Painel da fazenda selecionada ─────────────────────────
-    if propriedade_ativa:
-        historico_prop = listar_analises_salvas(current_user["id"], property_id=propriedade_ativa["id"])
-        if propriedade_ativa.get("latitude") is not None and propriedade_ativa.get("longitude") is not None:
-            clima_atual = obter_previsao_tempo(float(propriedade_ativa["latitude"]), float(propriedade_ativa["longitude"]))
-        if propriedade_ativa.get("cidade"):
-            ibge_info = obter_dados_municipio_ibge(propriedade_ativa["cidade"])
+        # ── Tabs diretas: Upload e Câmera ─────────────────────────
+        aba_upload, aba_camera = st.tabs(["📁 Upload de arquivo", "📸 Usar câmera"])
 
-        ultimo_score = round(float(historico_prop[0]["score_medio"]), 1) if historico_prop else 0.0
-        p1, p2, p3, p4 = st.columns(4)
-        p1.metric("🏡 Propriedade", propriedade_ativa["nome"])
-        p2.metric("📚 Análises salvas", len(historico_prop))
-        p3.metric("🧠 Amostras reais", amostras_modelo)
-        p4.metric("📈 Último score", f"{ultimo_score}/100" if historico_prop else "N/D")
-
-        d1, d2 = st.columns([1.2, 1])
-        with d1:
-            st.markdown(
-                f"**Localização:** {propriedade_ativa['cidade'] or 'Não informada'}  \n"
-                f"**Área:** {propriedade_ativa['area_ha']} ha  \n"
-                f"**Observações:** {propriedade_ativa['observacoes'] or 'Sem observações'}"
+        with aba_upload:
+            st.markdown("**Formatos aceitos:** JPG, JPEG, PNG (máx 200 MB)")
+            arquivo_upload = st.file_uploader(
+                "Selecione a imagem do terreno", type=["jpg", "jpeg", "png"],
+                key="upload_image_input",
+                on_change=handle_new_image_input, args=("upload_image_input", "Upload"),
+                label_visibility="collapsed"
             )
+
+        with aba_camera:
+            st.markdown("**Permita o acesso à câmera** no seu navegador")
+            foto_camera = st.camera_input(
+                "Tire uma foto", key="camera_image_input",
+                on_change=handle_new_image_input, args=("camera_image_input", "Câmera"),
+                label_visibility="collapsed"
+            )
+    else:
+        arquivo_upload = st.session_state.get("upload_image_input")
+        foto_camera = st.session_state.get("camera_image_input")
+
+    # ── Processar imagem ─────────────────────────────────────
+    imagem_entrada = None
+    origem_imagem = ""
+    ultimo_widget = st.session_state.get("last_image_widget")
+
+    if wizard_mode == "wizard" and st.session_state.get("wizard_imagem_entrada") is not None:
+        imagem_entrada = st.session_state.get("wizard_imagem_entrada")
+        origem_imagem = st.session_state.get("wizard_origem_imagem") or "Upload"
+    else:
+        if ultimo_widget == "upload_image_input" and arquivo_upload is not None:
+            imagem_entrada = arquivo_upload
+            origem_imagem = "Upload"
+        elif ultimo_widget == "camera_image_input" and foto_camera is not None:
+            imagem_entrada = foto_camera
+            origem_imagem = "Câmera"
+        elif arquivo_upload is not None:
+            imagem_entrada = arquivo_upload
+            origem_imagem = "Upload"
+        elif foto_camera is not None:
+            imagem_entrada = foto_camera
+            origem_imagem = "Câmera"
+
+    # Se NÃO tem imagem, mostra dica simples (apenas no fluxo completo; no wizard a Etapa 3 assume imagem já carregada)
+    if not imagem_entrada:
+        if wizard_mode == "full":
+            st.info("Comece a análise carregando uma imagem acima ⬆️")
+
+            # Seção opcional: Propriedade em expandable (para quem quer meter dados)
+            with st.expander("🏡 Propriedade (opcional) — Histórico, clima e comparação temporal", expanded=False):
+                if propriedades:
+                    opcao_nenhuma = "Nenhuma (modo rápido)"
+                    labels_props = [opcao_nenhuma] + [f"{p['nome']} — {p['cidade'] or 'Sem região'}" for p in propriedades]
+                    default_index = 0
+                    selected_prop_id = st.session_state.get("selected_property_id")
+                    if selected_prop_id:
+                        for idx, prop in enumerate(propriedades, start=1):
+                            if prop["id"] == selected_prop_id:
+                                default_index = idx
+                                break
+
+                    escolha_prop = st.selectbox(
+                        "Selecione uma propriedade",
+                        labels_props,
+                        index=default_index,
+                        help="Selecione 'Nenhuma' para análise rápida sem salvar no histórico.",
+                    )
+
+                    if escolha_prop == opcao_nenhuma:
+                        propriedade_ativa = None
+                        st.session_state["selected_property_id"] = None
+                        st.caption("✓ Modo avulso: análise rápida sem histórico")
+                    else:
+                        propriedade_ativa = propriedades[labels_props.index(escolha_prop) - 1]
+                        st.session_state["selected_property_id"] = propriedade_ativa["id"]
+                        st.caption(
+                            f"📍 Lat: {propriedade_ativa['latitude']}, Lon: {propriedade_ativa['longitude']} • "
+                            f"📊 Área: {propriedade_ativa['area_ha']} ha"
+                        )
+                else:
+                    st.info("Vá até **Registro de Propriedade** para cadastrar sua primeira fazenda e habilitar histórico.")
+
+            # Seção clima/IBGE (apenas se tiver propriedade)
+            if propriedade_ativa and propriedade_ativa.get("latitude"):
+                with st.expander("🌤️ Clima & Localização", expanded=False):
+                    col_clima, col_ibge = st.columns(2)
+
+                    with col_clima:
+                        st.markdown("**Previsão climática (Open-Meteo)**")
+                        clima_atual = obter_previsao_tempo(float(propriedade_ativa["latitude"]), float(propriedade_ativa["longitude"]))
+                        if clima_atual and not clima_atual.get("erro"):
+                            st.metric("🌡️ Temperatura", f"{clima_atual.get('temperatura', 'N/D')} °C")
+                            st.metric("💧 Umidade", f"{clima_atual.get('umidade', 'N/D')}%")
+                            st.metric("💨 Vento", f"{clima_atual.get('vento', 'N/D')} km/h")
+                        else:
+                            st.caption("Previsão indisponível")
+
+                    with col_ibge:
+                        st.markdown("**Dados IBGE**")
+                        ibge_info = obter_dados_municipio_ibge(propriedade_ativa["cidade"] or "")
+                        if ibge_info and not ibge_info.get("erro"):
+                            st.metric("🗺️ " + (ibge_info.get('municipio', 'Município') or "Município"),
+                                     ibge_info.get('uf', 'N/D'))
+                            st.caption(f"Área: {formatar_numero_br(ibge_info.get('area_km2'), 2)} km²")
+                        else:
+                            st.caption("Dados não encontrados")
+
+            st.stop()  # Para aqui se não tiver imagem
+        else:
+            st.warning("Nenhuma imagem encontrada na sessão. Volte para a Etapa 2 e faça o upload.")
+            return
+    
+    # ═════════════════════════════════════════════════════════════
+    # SEÇÃO 3: PAINEL AVANÇADO (em expandable quando propriedade selecionada)
+    # ═════════════════════════════════════════════════════════════
+    if propriedade_ativa:
+        with st.expander("📊 Painel completo da propriedade", expanded=False):
+            historico_prop = listar_analises_salvas(current_user["id"], property_id=propriedade_ativa["id"])
+            
             if propriedade_ativa.get("latitude") is not None and propriedade_ativa.get("longitude") is not None:
-                mapa_local = pd.DataFrame({
-                    "lat": [float(propriedade_ativa["latitude"])], "lon": [float(propriedade_ativa["longitude"])],
-                    "label": [propriedade_ativa["nome"]],
-                    "info": [f"{propriedade_ativa['cidade'] or 'Localização cadastrada'}<br/>Área: {propriedade_ativa['area_ha']} ha"],
-                    "radius": [180], "color": [[34, 166, 34, 190]],
-                })
-                st.caption("Mapa interativo da propriedade.")
-                render_interactive_geo_map(mapa_local, center_lat=float(propriedade_ativa["latitude"]), center_lon=float(propriedade_ativa["longitude"]), zoom=12.6)
-
-        with d2:
-            st.markdown("**Previsão climática integrada (Open-Meteo)**")
-            if clima_atual and not clima_atual.get("erro"):
-                janela24 = clima_atual.get("janela_24h", {})
-                janela3 = clima_atual.get("janela_3d", {})
-                janela7 = clima_atual.get("janela_7d", {})
-                melhor_janela = clima_atual.get("melhor_janela_operacao") or {}
-                c1, c2, c3 = st.columns(3)
-                c1.metric("🌡️ Temp. atual", f"{clima_atual.get('temperatura', 'N/D')} °C")
-                c2.metric("💧 Umidade", f"{clima_atual.get('umidade', 'N/D')}%")
-                c3.metric("💨 Vento", f"{clima_atual.get('vento', 'N/D')} km/h")
-                c4, c5, c6 = st.columns(3)
-                c4.metric("🌧️ Chuva 24h", f"{janela24.get('chuva_total_mm', 'N/D')} mm")
-                c5.metric("📆 Chuva 3 dias", f"{janela3.get('chuva_total_mm', 'N/D')} mm")
-                c6.metric("✅ Melhor janela", melhor_janela.get("data", "N/D"), f"{melhor_janela.get('chuva_mm', 'N/D')} mm")
-                st.caption(f"Chuva acumulada em 7 dias: {janela7.get('chuva_total_mm', 'N/D')} mm")
-                clima_tab_24h, clima_tab_7d = st.tabs(["Próximas 24h", "Próximos 7 dias"])
-                with clima_tab_24h:
-                    horas_df = pd.DataFrame([
-                        {"Hora": item["data"][11:16] if "T" in item["data"] else item["data"],
-                         "Temperatura (°C)": item["temperatura"], "Umidade (%)": item["umidade"],
-                         "Prob. chuva (%)": item["prob_chuva"]}
-                        for item in clima_atual.get("previsao_24h", [])
-                    ])
-                    if not horas_df.empty:
-                        st.line_chart(horas_df.set_index("Hora"), use_container_width=True)
-                with clima_tab_7d:
-                    clima_df = pd.DataFrame([
-                        {"Data": dia["data"], "Mín (°C)": dia["temp_min"], "Máx (°C)": dia["temp_max"], "Chuva (mm)": dia["chuva_mm"]}
-                        for dia in clima_atual.get("previsao", [])
-                    ])
-                    if not clima_df.empty:
-                        st.dataframe(clima_df, use_container_width=True, hide_index=True)
-                        st.bar_chart(clima_df.set_index("Data")[["Chuva (mm)"]], use_container_width=True)
+                clima_atual = obter_previsao_tempo(float(propriedade_ativa["latitude"]), float(propriedade_ativa["longitude"]))
+            if propriedade_ativa.get("cidade"):
+                ibge_info = obter_dados_municipio_ibge(propriedade_ativa["cidade"])
+            
+            # Métricas rápidas
+            p1, p2, p3, p4 = st.columns(4)
+            p1.metric("📚 Histórico", len(historico_prop))
+            p2.metric("🧠 Amostras", amostras_modelo)
+            if historico_prop:
+                ultimo_score = round(float(historico_prop[0]["score_medio"]), 1)
+                p3.metric("📈 Último score", f"{ultimo_score}/100")
             else:
-                st.info("Previsão indisponível para esta localização.")
+                p3.metric("📈 Último score", "—")
+            p4.metric("📍 Área", f"{propriedade_ativa['area_ha']} ha")
+            
+            # Info + Mapa
+            d1, d2 = st.columns([1, 1])
+            with d1:
+                st.markdown(f"""
+**📍 Localização:**  
+{propriedade_ativa['cidade'] or 'Não informada'}
 
-            st.markdown("**Referência territorial IBGE**")
+**📌 Coordenadas:**  
+Lat: {propriedade_ativa['latitude']}, Lon: {propriedade_ativa['longitude']}
+
+**📝 Observações:**  
+{propriedade_ativa['observacoes'] or '—'}
+                """)
+            
+            with d2:
+                if propriedade_ativa.get("latitude") is not None and propriedade_ativa.get("longitude") is not None:
+                    mapa_local = pd.DataFrame({
+                        "lat": [float(propriedade_ativa["latitude"])], "lon": [float(propriedade_ativa["longitude"])],
+                        "label": [propriedade_ativa["nome"]],
+                        "info": [f"{propriedade_ativa['cidade'] or 'Localização cadastrada'}<br/>Área: {propriedade_ativa['area_ha']} ha"],
+                        "radius": [180], "color": [[34, 166, 34, 190]],
+                    })
+                    render_interactive_geo_map(mapa_local, center_lat=float(propriedade_ativa["latitude"]), center_lon=float(propriedade_ativa["longitude"]), zoom=12.6)
+            
+            # Dados IBGE
+            st.divider()
+            st.markdown("**🗺️ Referência Territorial IBGE**")
             if ibge_info and not ibge_info.get("erro"):
                 st.markdown(
                     f"**Município:** {ibge_info.get('municipio', 'N/D')} / {ibge_info.get('uf', 'N/D')}  \n"
@@ -2591,161 +3412,130 @@ def render_tab_analise(current_user: dict, propriedades: list, usar_ia: bool, ap
                 i2.metric("👥 Densidade",
                           f"{formatar_numero_br(ibge_info.get('densidade_hab_km2'), 2)} hab/km²" if ibge_info.get("densidade_hab_km2") is not None else "N/D")
                 if ibge_info.get("populacao_residente") is not None:
-                    st.caption(f"População residente: {formatar_numero_br(float(ibge_info['populacao_residente']), 0)} habitantes")
+                    st.caption(f"👨‍👩‍👧‍👦 População residente: {formatar_numero_br(float(ibge_info['populacao_residente']), 0)} habitantes")
             elif propriedade_ativa.get("cidade"):
-                st.caption("Município não validado automaticamente no IBGE com o texto cadastrado.")
-    else:
-        render_priority_notice(
-            "Modo avulso ativo",
-            "Você pode analisar a imagem normalmente. Para clima, histórico e comparação temporal, selecione uma propriedade acima.",
-            level="low",
-        )
+                st.caption("⚠️ Município não validado automaticamente no IBGE com o texto cadastrado.")
+            else:
+                st.caption("Nenhum município associado a esta propriedade.")
 
-    # ── Modelo local ──────────────────────────────────────────
-    st.divider()
-    typewriter("🧠 Modelo Local com Imagens Reais", tag="h3")
-    if amostras_modelo >= 6:
-        st.success(f"Classificador híbrido ativo com {amostras_modelo} amostras reais no banco local.")
-    else:
-        st.info(f"Acumulando amostras ({amostras_modelo} até agora). O modelo ganha precisão a cada análise salva.")
+    # ═════════════════════════════════════════════════════════════
+    # SEÇÃO 4: PROCESSA E MOSTRA RESULTADOS DA IMAGEM
+    # ═════════════════════════════════════════════════════════════
+    img_bytes = imagem_entrada.getvalue()
+    sync_image_state(img_bytes, origem_imagem)
+    raw = np.frombuffer(img_bytes, dtype=np.uint8)
+    img_full = cv2.imdecode(raw, cv2.IMREAD_COLOR)
 
-    # ── Entrada de imagem ─────────────────────────────────────
-    st.divider()
-    st.markdown("<div id='secao-upload'></div>", unsafe_allow_html=True)
-    typewriter("📷 Entrada da Imagem", tag="h3")
-    aba_upload, aba_camera = st.tabs(["Upload de arquivo", "Usar câmera"])
-    with aba_upload:
-        arquivo_upload = st.file_uploader(
-            "Envie a foto do terreno", type=["jpg", "jpeg", "png"],
-            key="upload_image_input",
-            on_change=handle_new_image_input, args=("upload_image_input", "Upload"),
-        )
-    with aba_camera:
-        foto_camera = st.camera_input(
-            "Tire uma foto do terreno", key="camera_image_input",
-            on_change=handle_new_image_input, args=("camera_image_input", "Câmera"),
-        )
-        st.caption("Permita o acesso à câmera no navegador para capturar a imagem.")
+    if img_full is None:
+        st.error("Não foi possível ler a imagem enviada.")
+        return  # FIX: evita usar 'img' sem definição se o decode falhar
 
-    imagem_entrada = None
-    origem_imagem = ""
-    ultimo_widget = st.session_state.get("last_image_widget")
-    if ultimo_widget == "upload_image_input" and arquivo_upload is not None:
-        imagem_entrada = arquivo_upload; origem_imagem = "Upload"
-    elif ultimo_widget == "camera_image_input" and foto_camera is not None:
-        imagem_entrada = foto_camera; origem_imagem = "Câmera"
-    elif arquivo_upload is not None:
-        imagem_entrada = arquivo_upload; origem_imagem = "Upload"
-    elif foto_camera is not None:
-        imagem_entrada = foto_camera; origem_imagem = "Câmera"
-    else:
-        st.info("Envie uma imagem ou tire uma foto pela câmera para iniciar a análise.")
+    img = redimensionar(img_full, MAX_W, MAX_H)
+    H, W = img.shape[:2]
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
 
-    if imagem_entrada:
-        img_bytes = imagem_entrada.getvalue()
-        sync_image_state(img_bytes, origem_imagem)
-        raw = np.frombuffer(img_bytes, dtype=np.uint8)
-        img_full = cv2.imdecode(raw, cv2.IMREAD_COLOR)
+    DISPLAY_W = min(W, 380)
+    img_rgb_display = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    img_b64_upload = img_rgb_to_base64(img_rgb_display)
+    st.markdown(
+        f"<div style='display:flex;flex-direction:column;align-items:center;margin:0 0 12px'>"
+        f"<img src='data:image/jpeg;base64,{img_b64_upload}' style='width:{DISPLAY_W}px;border-radius:10px;box-shadow:0 8px 22px rgba(0,0,0,.16);'/>"
+        f"<span class='agroscan-muted' style='font-size:12px;margin-top:4px'>Imagem carregada via {origem_imagem} ({W} x {H} px)</span></div>",
+        unsafe_allow_html=True,
+    )
+    if st.session_state.pop("new_image_reset_notice", False):
+        render_priority_notice("Nova imagem detectada",
+                               "A etapa de análise de grids foi reiniciada automaticamente para esta nova captura.", level="medium")
+        if hasattr(st, "toast"):
+            st.toast("Nova imagem recebida — a análise anterior foi resetada.", icon="🔄")
 
-        if img_full is None:
-            st.error("Não foi possível ler a imagem enviada.")
-            return  # FIX: evita usar 'img' sem definição se o decode falhar
+    b_f, g_f, r_f = cv2.split(img.astype("float32"))
+    ndvi_global = float(np.mean((g_f - r_f) / (g_f + r_f + 1e-5)))
+    total = H * W
+    p_verde   = np.sum(cv2.inRange(hsv, _VERDE["lo"],   _VERDE["hi"]) > 0) / total
+    p_amarelo = np.sum(cv2.inRange(hsv, _AMARELO["lo"], _AMARELO["hi"]) > 0) / total
+    p_cinza   = np.sum(cv2.inRange(hsv, _CINZA["lo"],   _CINZA["hi"]) > 0) / total
+    p_azul    = np.sum(cv2.inRange(hsv, _AZUL["lo"],    _AZUL["hi"]) > 0) / total
 
-        img = redimensionar(img_full, MAX_W, MAX_H)
-        H, W = img.shape[:2]
-        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    if p_verde > 0.4:       resultado_geral = "Terreno fértil"
+    elif p_amarelo > 0.3:   resultado_geral = "Terreno seco"
+    elif p_cinza > 0.3:     resultado_geral = "Terreno rochoso"
+    elif p_azul > 0.2:      resultado_geral = "Terreno úmido"
+    else:                   resultado_geral = "Terreno arenoso"
 
-        DISPLAY_W = min(W, 380)
-        img_rgb_display = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        img_b64_upload = img_rgb_to_base64(img_rgb_display)
-        st.markdown(
-            f"<div style='display:flex;flex-direction:column;align-items:center;margin:0 0 12px'>"
-            f"<img src='data:image/jpeg;base64,{img_b64_upload}' style='width:{DISPLAY_W}px;border-radius:10px;box-shadow:0 8px 22px rgba(0,0,0,.16);'/>"
-            f"<span class='agroscan-muted' style='font-size:12px;margin-top:4px'>Imagem carregada via {origem_imagem} ({W} x {H} px)</span></div>",
-            unsafe_allow_html=True,
-        )
-        if st.session_state.pop("new_image_reset_notice", False):
-            render_priority_notice("Nova imagem detectada",
-                                   "A etapa de análise de grids foi reiniciada automaticamente para esta nova captura.", level="medium")
-            if hasattr(st, "toast"):
-                st.toast("Nova imagem recebida — a análise anterior foi resetada.", icon="🔄")
+    metricas_globais = {
+        "ndvi_global": ndvi_global, "p_verde": float(p_verde),
+        "p_amarelo": float(p_amarelo), "p_cinza": float(p_cinza), "p_azul": float(p_azul),
+    }
 
-        b_f, g_f, r_f = cv2.split(img.astype("float32"))
-        ndvi_global = float(np.mean((g_f - r_f) / (g_f + r_f + 1e-5)))
-        total = H * W
-        p_verde   = np.sum(cv2.inRange(hsv, _VERDE["lo"],   _VERDE["hi"]) > 0) / total
-        p_amarelo = np.sum(cv2.inRange(hsv, _AMARELO["lo"], _AMARELO["hi"]) > 0) / total
-        p_cinza   = np.sum(cv2.inRange(hsv, _CINZA["lo"],   _CINZA["hi"]) > 0) / total
-        p_azul    = np.sum(cv2.inRange(hsv, _AZUL["lo"],    _AZUL["hi"]) > 0) / total
+    typewriter("📊 Resultado Geral", tag="h3")
+    st.success(resultado_geral)
+    st.metric("NDVI médio (saúde da vegetação)", f"{round(ndvi_global * 100, 1)}%")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("🌿 Fértil", f"{round(p_verde * 100, 1)}%")
+    c2.metric("☀️ Seco", f"{round(p_amarelo * 100, 1)}%")
+    c3.metric("🪨 Rochoso", f"{round(p_cinza * 100, 1)}%")
+    c4.metric("💧 Úmido", f"{round(p_azul * 100, 1)}%")
 
-        if p_verde > 0.4:       resultado_geral = "Terreno fértil"
-        elif p_amarelo > 0.3:   resultado_geral = "Terreno seco"
-        elif p_cinza > 0.3:     resultado_geral = "Terreno rochoso"
-        elif p_azul > 0.2:      resultado_geral = "Terreno úmido"
-        else:                   resultado_geral = "Terreno arenoso"
+    mapa = gerar_mapa_terreno(img)
 
-        metricas_globais = {
-            "ndvi_global": ndvi_global, "p_verde": float(p_verde),
-            "p_amarelo": float(p_amarelo), "p_cinza": float(p_cinza), "p_azul": float(p_azul),
-        }
-
-        typewriter("📊 Resultado Geral", tag="h3")
-        st.success(resultado_geral)
-        st.metric("NDVI médio (saúde da vegetação)", f"{round(ndvi_global * 100, 1)}%")
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("🌿 Fértil", f"{round(p_verde * 100, 1)}%")
-        c2.metric("☀️ Seco", f"{round(p_amarelo * 100, 1)}%")
-        c3.metric("🪨 Rochoso", f"{round(p_cinza * 100, 1)}%")
-        c4.metric("💧 Úmido", f"{round(p_azul * 100, 1)}%")
-
-        mapa = gerar_mapa_terreno(img)
-
-        typewriter("🗺️ Mapa de Identificação NDVI", tag="h3")
-        # FIX: garante que cmp_pct sempre existe antes de ser lido
-        if "cmp_pct" not in st.session_state:
+    typewriter("🗺️ Mapa de Identificação NDVI", tag="h3")
+    # FIX: garante que cmp_pct sempre existe antes de ser lido
+    if "cmp_pct" not in st.session_state:
+        st.session_state["cmp_pct"] = 50
+    
+    # FIX: centralizar mapa e legenda
+    st.markdown("<div style='text-align:center'>", unsafe_allow_html=True)
+    
+    # Botões em 3 colunas
+    bc1, bc2, bc3 = st.columns([1, 1, 1])
+    with bc1:
+        if st.button("Reset 50%", use_container_width=True):
             st.session_state["cmp_pct"] = 50
-
-        bc1, bc2, bc3 = st.columns([1, 1, 1])
-        with bc1:
-            if st.button("Reset 50%", use_container_width=True):
-                st.session_state["cmp_pct"] = 50
-        with bc2:
-            if st.button("Original", use_container_width=True):
-                st.session_state["cmp_pct"] = 0
-        with bc3:
-            if st.button("Mapa completo", use_container_width=True):
+    with bc2:
+        if st.button("Original", use_container_width=True):
+            st.session_state["cmp_pct"] = 0
+    with bc3:
+        if st.button("Mapa completo", use_container_width=True):
                 st.session_state["cmp_pct"] = 100
 
+    # Centralizar mapa
+    col_empty_left, col_map, col_empty_right = st.columns([0.1, 0.8, 0.1])
+    with col_map:
         slider_comparacao(img, mapa, st.session_state["cmp_pct"],
                           left_label="Imagem original", right_label="Mapa NDVI",
                           component_key="comparador_ndvi_atual")
 
-        legenda_html = (
-            "<div style='display:flex;flex-direction:column;gap:6px;margin:8px 0 16px'>"
-            "<div style='display:flex;align-items:center;gap:8px'>"
-            "<div style='width:120px;height:14px;border-radius:3px;background:linear-gradient(to right,#30123b,#4887f7,#1de4b1,#a2fc3c,#fba318,#7a0403);'></div>"
-            "<span style='font-size:12px'>Escala NDVI: Baixo → Alto</span></div>"
-            "<div style='display:flex;gap:16px;flex-wrap:wrap;font-size:12px'>"
-            "<span>🟣 Sem vegetação/Rochoso</span><span>🔵 Solo exposto/Seco</span>"
-            "<span>🟢 Vegetação moderada</span><span>🟡 Vegetação densa</span><span>🔴 Stress hídrico</span>"
-            "</div></div>"
-        )
-        st.markdown(legenda_html, unsafe_allow_html=True)
-        render_floating_grid_legend()
+    st.markdown("</div>", unsafe_allow_html=True)
+    
+    # Legenda centralizada
+    legenda_html = (
+        "<div style='text-align:center;margin:16px 0'>"
+        "<div style='display:inline-flex;flex-direction:column;gap:6px'>"
+        "<div style='display:flex;align-items:center;gap:8px;justify-content:center'>"
+        "<div style='width:120px;height:14px;border-radius:3px;background:linear-gradient(to right,#30123b,#4887f7,#1de4b1,#a2fc3c,#fba318,#7a0403);'></div>"
+        "<span style='font-size:12px;font-weight:600'>Escala NDVI: Baixo → Alto</span></div>"
+        "<div style='display:flex;gap:16px;flex-wrap:wrap;font-size:12px;justify-content:center'>"
+        "<span>🟣 Sem vegetação/Rochoso</span><span>🔵 Solo exposto/Seco</span>"
+        "<span>🟢 Vegetação moderada</span><span>🟡 Vegetação densa</span><span>🔴 Stress hídrico</span>"
+        "</div></div></div>"
+    )
+    st.markdown(legenda_html, unsafe_allow_html=True)
+    render_floating_grid_legend()
 
-        typewriter("🔲 Análise por Regiões", tag="h3")
-        num_grids = st.radio("Número de grids:", [4, 8, 16, 32], horizontal=True)
-        grid_map = {4: (2, 2), 8: (2, 4), 16: (4, 4), 32: (4, 8)}
-        rows, cols = grid_map[num_grids]
-        coords: dict = {}
-        for i in range(rows):
-            for j in range(cols):
-                nome = f"Grid {i * cols + j + 1}"
-                ys_, ye_ = i * (H // rows), (i + 1) * (H // rows)
-                xs_, xe_ = j * (W // cols), (j + 1) * (W // cols)
-                coords[nome] = (xs_, xe_, ys_, ye_)
+    typewriter("🔲 Análise por Regiões", tag="h3")
+    num_grids = st.radio("Número de grids:", [4, 8, 16, 32], horizontal=True)
+    grid_map = {4: (2, 2), 8: (2, 4), 16: (4, 4), 32: (4, 8)}
+    rows, cols = grid_map[num_grids]
+    coords: dict = {}
+    for i in range(rows):
+        for j in range(cols):
+            nome = f"Grid {i * cols + j + 1}"
+            ys_, ye_ = i * (H // rows), (i + 1) * (H // rows)
+            xs_, xe_ = j * (W // cols), (j + 1) * (W // cols)
+            coords[nome] = (xs_, xe_, ys_, ye_)
 
-        if st.button("Iniciar análise de grids", type="primary", use_container_width=True):
+    if st.button("Iniciar análise de grids", type="primary", use_container_width=True):
             stage_box = st.empty()
             progress_bar = st.progress(0)
             render_analysis_progress(stage_box, progress_bar, 6, "Preparando leitura", "Validando imagem, malha e dados iniciais.")
@@ -2818,16 +3608,9 @@ def render_tab_analise(current_user: dict, propriedades: list, usar_ia: bool, ap
         plano_acao           = st.session_state.get("plano_acao", [])
         risk_geo_points      = st.session_state.get("risk_geo_points", [])
 
-        executive_mode = st.session_state.get("executive_mode", False)
-        if executive_mode:
-            st.markdown("<div class='agroscan-executive-banner'><strong>🎤 Modo executivo</strong> — layout compacto para apresentação.</div>", unsafe_allow_html=True)
-            with st.expander("🚁 Ver animação operacional dos grids", expanded=False):
-                html_anim = drone_animation_component(_img, analises, _coords, _rows, _cols)
-                st.components.v1.html(html_anim, height=int(_img.shape[0]) + 40)
-        else:
-            typewriter("🚁 Drone em operação", tag="h3")
-            html_anim = drone_animation_component(_img, analises, _coords, _rows, _cols)
-            st.components.v1.html(html_anim, height=int(_img.shape[0]) + 40)
+        typewriter("🚁 Drone em operação", tag="h3")
+        html_anim = drone_animation_component(_img, analises, _coords, _rows, _cols)
+        st.components.v1.html(html_anim, height=int(_img.shape[0]) + 40)
 
         st.markdown("<h3 class='fade-slide'>🧾 Resumo Executivo</h3>", unsafe_allow_html=True)
         resumo_cards = [f"<div class='agroscan-card accent-success'>{linha}</div>" for linha in st.session_state.get("resumo_executivo", [])]
@@ -3002,33 +3785,6 @@ def render_tab_analise(current_user: dict, propriedades: list, usar_ia: bool, ap
                     )
             st.session_state.pop("rec_ia", None)
 
-        st.divider()
-        st.markdown("<h3 class='fade-slide'>📄 Exportar Relatório</h3>", unsafe_allow_html=True)
-        if st.button("Gerar PDF", use_container_width=True):
-            with st.spinner("Gerando relatório executivo com reportlab..."):
-                rec_cont = st.session_state.get("rec_ia") or analises
-                pdf_buf = gerar_pdf(
-                    st.session_state["img_orig"], st.session_state["img_mapa"],
-                    analises, rec_cont,
-                    meta={
-                        "usuario": current_user["username"],
-                        "origem_imagem": st.session_state.get("origem_imagem", "N/D"),
-                        "propriedade": st.session_state.get("propriedade_ativa") or propriedade_ativa or {},
-                        "ibge": ibge_info, "clima": st.session_state.get("clima_atual", {}),
-                        "riscos": st.session_state.get("riscos", []),
-                        "localized_risks": st.session_state.get("localized_risks", []),
-                        "resumo_executivo": st.session_state.get("resumo_executivo", []),
-                        "alertas_inteligentes": st.session_state.get("alertas_inteligentes", []),
-                        "plano_acao": st.session_state.get("plano_acao", []),
-                    },
-                )
-            if pdf_buf:
-                st.download_button(
-                    "⬇️ Baixar relatório PDF", data=pdf_buf,
-                    file_name=f"agroscan_{time.strftime('%Y%m%d_%H%M')}.pdf",
-                    mime="application/pdf", use_container_width=True,
-                )
-
     # ── Histórico e comparação temporal ──────────────────────
     st.divider()
     st.markdown("<div id='secao-historico'></div>", unsafe_allow_html=True)
@@ -3103,12 +3859,6 @@ def render_tab_analise(current_user: dict, propriedades: list, usar_ia: bool, ap
                             render_priority_notice("Comparação visual indisponível",
                                                    "Não foi possível carregar as imagens históricas para o slider premium.", level="medium")
 
-                        ic1, ic2 = st.columns(2)
-                        with ic1:
-                            st.image(analise_a["image_path"], caption=f"Base #{analise_a['id']}", use_container_width=True)
-                        with ic2:
-                            st.image(analise_b["image_path"], caption=f"Comparada #{analise_b['id']}", use_container_width=True)
-
                         riscos_a = ", ".join(r["titulo"] for r in analise_a.get("risks", [])) or "Sem riscos críticos"
                         riscos_b = ", ".join(r["titulo"] for r in analise_b.get("risks", [])) or "Sem riscos críticos"
                         st.markdown(f"**Riscos da análise base:** {riscos_a}")
@@ -3123,18 +3873,47 @@ def render_tab_analise(current_user: dict, propriedades: list, usar_ia: bool, ap
         render_priority_notice("Comparação temporal desativada",
                                "Com 'Nenhuma' selecionado, a análise fica em modo avulso sem comparação antes/depois.", level="info")
 
+    # ── Exportar PDF (trunfo no final) ────────────────────────
+    st.divider()
+    st.markdown("<h3 class='fade-slide'>📄 Exportar Relatório (PDF)</h3>", unsafe_allow_html=True)
+    st.caption("Gere um relatório executivo completo com mapa NDVI, riscos, alertas e plano de ação.")
+    if st.button("Gerar PDF", use_container_width=True, type="primary"):
+        with st.spinner("Gerando relatório executivo com reportlab..."):
+            rec_cont = st.session_state.get("rec_ia") or analises
+            pdf_buf = gerar_pdf(
+                st.session_state["img_orig"], st.session_state["img_mapa"],
+                analises, rec_cont,
+                meta={
+                    "usuario": current_user["username"],
+                    "origem_imagem": st.session_state.get("origem_imagem", "N/D"),
+                    "propriedade": st.session_state.get("propriedade_ativa") or propriedade_ativa or {},
+                    "ibge": ibge_info, "clima": st.session_state.get("clima_atual", {}),
+                    "riscos": st.session_state.get("riscos", []),
+                    "localized_risks": st.session_state.get("localized_risks", []),
+                    "resumo_executivo": st.session_state.get("resumo_executivo", []),
+                    "alertas_inteligentes": st.session_state.get("alertas_inteligentes", []),
+                    "plano_acao": st.session_state.get("plano_acao", []),
+                },
+            )
+        if pdf_buf:
+            st.download_button(
+                "⬇️ Baixar relatório PDF",
+                data=pdf_buf,
+                file_name=f"agroscan_{time.strftime('%Y%m%d_%H%M')}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+            )
+
 
 # ═══════════════════════════════════════════════════════════════
 # PONTO DE ENTRADA PRINCIPAL
 # ═══════════════════════════════════════════════════════════════
 
-st.set_page_config(page_title="AgroScan Drone", page_icon="🌱", layout="wide")
+st.set_page_config(page_title="AgroScan Identificação e Recomendação de terreno", page_icon="🌱", layout="wide")
 
 # FIX: session_state inicializado sem show_guided_tour (tour removido)
 if "theme_mode" not in st.session_state:
     st.session_state["theme_mode"] = "Escuro"
-if "executive_mode" not in st.session_state:
-    st.session_state["executive_mode"] = False
 
 inject_global_css()
 init_db()
@@ -3148,7 +3927,7 @@ st.markdown(
 if "current_user" not in st.session_state:
     # Exibe título mesmo na tela de login
     st.markdown(
-        "<h1 style='font-size:1.8rem;margin-bottom:4px'>🌱 AgroScan Drone</h1>"
+        "<h1 style='font-size:1.8rem;margin-bottom:4px'>🌱 Identificação e Recomendação de terrenos</h1>"
         "<div class='agroscan-subtitle'>Diagnóstico agrícola com clima, território IBGE, mapa interativo e plano de ação.</div>",
         unsafe_allow_html=True,
     )
@@ -3176,15 +3955,6 @@ with st.sidebar:
         st.session_state["theme_mode"] = theme_choice
         st.rerun()
 
-    executive_choice = st.toggle(
-        "Modo executivo",
-        value=st.session_state.get("executive_mode", False),
-        help="Simplifica a visualização para reuniões e demonstrações.",
-    )
-    if executive_choice != st.session_state.get("executive_mode", False):
-        st.session_state["executive_mode"] = executive_choice
-        st.rerun()
-
     if st.button("Sair", use_container_width=True):
         reset_analysis_state()
         for chave in [
@@ -3207,9 +3977,5 @@ with st.sidebar:
     st.caption(f"Modelo local: {amostras_modelo} amostras reais acumuladas")
     st.caption(f"AgroScan v{APP_VERSION} — upload, câmera, histórico e campo")
 
-# ── Roteamento das abas ───────────────────────────────────────
-aba_registro, aba_analise = st.tabs(["Registro de propriedade", "Análise Geral"])
-with aba_registro:
-    render_tab_registro(current_user, propriedades)
-with aba_analise:
-    render_tab_analise(current_user, propriedades, usar_ia, api_key)
+# ── Wizard SaaS (fluxo por etapas) ────────────────────────────
+render_wizard(current_user, propriedades, usar_ia, api_key)
