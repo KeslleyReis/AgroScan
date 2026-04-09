@@ -3838,6 +3838,38 @@ Lat: {propriedade_ativa['latitude']}, Lon: {propriedade_ativa['longitude']}
                         mapa_a_bgr = carregar_imagem_bgr(analise_a.get("map_path"))
                         mapa_b_bgr = carregar_imagem_bgr(analise_b.get("map_path"))
 
+                        # ── Exportar PDF (acima da comparação premium) ──
+                        st.divider()
+                        st.markdown("<h3 class='fade-slide'>📄 Exportar Relatório (PDF)</h3>", unsafe_allow_html=True)
+                        st.caption("Gere um relatório executivo completo com mapa NDVI, riscos, alertas e plano de ação.")
+                        if st.button("Gerar PDF", key="gerar_pdf_historico", use_container_width=True, type="primary"):
+                            with st.spinner("Gerando relatório executivo com reportlab..."):
+                                rec_cont = st.session_state.get("rec_ia") or analises
+                                pdf_buf = gerar_pdf(
+                                    st.session_state["img_orig"], st.session_state["img_mapa"],
+                                    analises, rec_cont,
+                                    meta={
+                                        "usuario": current_user["username"],
+                                        "origem_imagem": st.session_state.get("origem_imagem", "N/D"),
+                                        "propriedade": st.session_state.get("propriedade_ativa") or propriedade_ativa or {},
+                                        "ibge": ibge_info, "clima": st.session_state.get("clima_atual", {}),
+                                        "riscos": st.session_state.get("riscos", []),
+                                        "localized_risks": st.session_state.get("localized_risks", []),
+                                        "resumo_executivo": st.session_state.get("resumo_executivo", []),
+                                        "alertas_inteligentes": st.session_state.get("alertas_inteligentes", []),
+                                        "plano_acao": st.session_state.get("plano_acao", []),
+                                    },
+                                )
+                            if pdf_buf:
+                                st.download_button(
+                                    "⬇️ Baixar relatório PDF",
+                                    data=pdf_buf,
+                                    file_name=f"agroscan_{time.strftime('%Y%m%d_%H%M')}.pdf",
+                                    mime="application/pdf",
+                                    use_container_width=True,
+                                )
+                        st.divider()
+
                         st.markdown("#### 🎚️ Comparação premium antes x depois")
                         if img_a_bgr is not None and img_b_bgr is not None:
                             tab_cmp_img, tab_cmp_ndvi = st.tabs(["📷 Imagem do terreno", "🗺️ Mapa NDVI"])
@@ -3873,36 +3905,7 @@ Lat: {propriedade_ativa['latitude']}, Lon: {propriedade_ativa['longitude']}
         render_priority_notice("Comparação temporal desativada",
                                "Com 'Nenhuma' selecionado, a análise fica em modo avulso sem comparação antes/depois.", level="info")
 
-    # ── Exportar PDF (trunfo no final) ────────────────────────
-    st.divider()
-    st.markdown("<h3 class='fade-slide'>📄 Exportar Relatório (PDF)</h3>", unsafe_allow_html=True)
-    st.caption("Gere um relatório executivo completo com mapa NDVI, riscos, alertas e plano de ação.")
-    if st.button("Gerar PDF", use_container_width=True, type="primary"):
-        with st.spinner("Gerando relatório executivo com reportlab..."):
-            rec_cont = st.session_state.get("rec_ia") or analises
-            pdf_buf = gerar_pdf(
-                st.session_state["img_orig"], st.session_state["img_mapa"],
-                analises, rec_cont,
-                meta={
-                    "usuario": current_user["username"],
-                    "origem_imagem": st.session_state.get("origem_imagem", "N/D"),
-                    "propriedade": st.session_state.get("propriedade_ativa") or propriedade_ativa or {},
-                    "ibge": ibge_info, "clima": st.session_state.get("clima_atual", {}),
-                    "riscos": st.session_state.get("riscos", []),
-                    "localized_risks": st.session_state.get("localized_risks", []),
-                    "resumo_executivo": st.session_state.get("resumo_executivo", []),
-                    "alertas_inteligentes": st.session_state.get("alertas_inteligentes", []),
-                    "plano_acao": st.session_state.get("plano_acao", []),
-                },
-            )
-        if pdf_buf:
-            st.download_button(
-                "⬇️ Baixar relatório PDF",
-                data=pdf_buf,
-                file_name=f"agroscan_{time.strftime('%Y%m%d_%H%M')}.pdf",
-                mime="application/pdf",
-                use_container_width=True,
-            )
+    
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -3927,7 +3930,7 @@ st.markdown(
 if "current_user" not in st.session_state:
     # Exibe título mesmo na tela de login
     st.markdown(
-        "<h1 style='font-size:1.8rem;margin-bottom:4px'>🌱 Identificação e Recomendação de terrenos</h1>"
+        "<h1 style='font-size:1.8rem;margin-bottom:4px'>Identificação e Recomendação de terrenos</h1>"
         "<div class='agroscan-subtitle'>Diagnóstico agrícola com clima, território IBGE, mapa interativo e plano de ação.</div>",
         unsafe_allow_html=True,
     )
